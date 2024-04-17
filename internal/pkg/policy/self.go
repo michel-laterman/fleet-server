@@ -40,6 +40,7 @@ type SelfMonitor interface {
 type selfMonitorT struct {
 	log zerolog.Logger
 
+	cfg     *config.Config
 	mut     sync.Mutex
 	fleet   config.Fleet
 	bulker  bulk.Bulk
@@ -63,10 +64,11 @@ type selfMonitorT struct {
 //
 // Ensures that the policy that this Fleet Server attached to exists and that it
 // has a Fleet Server input defined.
-func NewSelfMonitor(fleet config.Fleet, bulker bulk.Bulk, monitor monitor.Monitor, policyId string, reporter status.Reporter) SelfMonitor {
+func NewSelfMonitor(cfg *config.Config, bulker bulk.Bulk, monitor monitor.Monitor, policyId string, reporter status.Reporter) SelfMonitor {
 	return &selfMonitorT{
 		log:              log.With().Str("ctx", "policy self monitor").Logger(),
-		fleet:            fleet,
+		cfg:              cfg,
+		fleet:            cfg.Fleet,
 		bulker:           bulker,
 		monitor:          monitor,
 		policyId:         policyId,
@@ -233,7 +235,7 @@ func (m *selfMonitorT) updateStatus(ctx context.Context) (proto.StateObserved_St
 	var payload map[string]interface{}
 	if m.fleet.Agent.ID == "" {
 		status = proto.StateObserved_DEGRADED
-		extendMsg = "; missing config fleet.agent.id (expected during bootstrap process)"
+		extendMsg = fmt.Sprintf("; missing config fleet.agent.id (expected during bootstrap process), server.ssl: %+v, host: %s", m.cfg.Inputs[0].Server.TLS, m.cfg.Inputs[0].Server.Host)
 
 		// Elastic Agent has not been enrolled; Fleet Server passes back the enrollment token so the Elastic Agent
 		// can perform enrollment.

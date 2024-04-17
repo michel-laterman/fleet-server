@@ -802,7 +802,7 @@ func (f *FleetServer) runSubsystems(ctx context.Context, cfg *config.Config, g *
 	g.Go(loggedRunFunc(ctx, "Policy monitor", pm.Run))
 
 	// Policy self monitor
-	sm := policy.NewSelfMonitor(cfg.Fleet, bulker, pim, cfg.Inputs[0].Policy.ID, f.reporter)
+	sm := policy.NewSelfMonitor(cfg, bulker, pim, cfg.Inputs[0].Policy.ID, f.reporter)
 	g.Go(loggedRunFunc(ctx, "Policy self monitor", sm.Run))
 
 	// Actions monitoring
