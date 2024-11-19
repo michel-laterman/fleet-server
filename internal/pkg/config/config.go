@@ -10,13 +10,26 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/gofrs/uuid"
+	"github.com/rs/zerolog"
+
+	"github.com/elastic/elastic-agent-libs/transport/tlscommon"
 	"github.com/elastic/fleet-server/v7/version"
 	"github.com/elastic/go-ucfg"
 	"github.com/elastic/go-ucfg/flag"
 	"github.com/elastic/go-ucfg/yaml"
-	"github.com/gofrs/uuid"
-	"github.com/rs/zerolog"
 )
+
+// tlsMinVersion is the minimum accepted TLS version fleet-server can use.
+const tlsMinVersion = tlscommon.TLSVersion11
+
+func init() {
+	// Update TLS default version to 1.2 and 1.3
+	tlscommon.TLSDefaultVersions = []tlscommon.TLSVersion{
+		tlscommon.TLSVersion12,
+		tlscommon.TLSVersion13,
+	}
+}
 
 // DefaultOptions defaults options used to read the configuration
 var DefaultOptions = []ucfg.Option{

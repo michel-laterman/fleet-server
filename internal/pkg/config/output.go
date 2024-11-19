@@ -17,11 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
+
 	urlutil "github.com/elastic/elastic-agent-libs/kibana"
 	"github.com/elastic/elastic-agent-libs/transport/httpcommon"
 	"github.com/elastic/elastic-agent-libs/transport/tlscommon"
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/rs/zerolog"
 )
 
 // The timeout would be driven by the server for long poll.
@@ -73,9 +74,14 @@ func (c *Elasticsearch) Validate() error {
 		}
 	}
 	if c.TLS != nil && c.TLS.IsEnabled() {
-		_, err := tlscommon.LoadTLSConfig(c.TLS)
+		cfg, err := tlscommon.LoadTLSConfig(c.TLS)
 		if err != nil {
 			return err
+		}
+		for _, version := range cfg.Versions {
+			if version < tlsMinVersion {
+				return fmt.Errorf("elasticsearch output configuration: invalid TLS version detected: %s", version)
+			}
 		}
 	}
 	return nil

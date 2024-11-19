@@ -164,5 +164,12 @@ func (c *Input) Validate() error {
 	if c.Type != fleetInputType {
 		return fmt.Errorf("input type must be %q", fleetInputType)
 	}
+	if c.Server.TLS != nil && c.Server.TLS.IsEnabled() {
+		for _, version := range c.Server.TLS.Versions {
+			if version < tlsMinVersion {
+				return fmt.Errorf("input server configuration: invalid TLS version detected: %s", version)
+			}
+		}
+	}
 	return nil
 }

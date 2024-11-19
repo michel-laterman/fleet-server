@@ -62,6 +62,7 @@ func (c *Instrumentation) APMHTTPTransportOptions() (apmtransport.HTTPTransportO
 
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: c.TLS.SkipVerify, //nolint:gosec // users can disable tls validation
+		MinVersion:         tls.VersionTLS12,
 	}
 
 	if c.TLS.ServerCertificate != "" {
