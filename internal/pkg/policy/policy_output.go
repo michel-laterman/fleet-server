@@ -32,6 +32,22 @@ const (
 	OutputTypeKafka               = "kafka"
 
 	OTelExporterTypeElasticsearch = "elasticsearch"
+
+	maxRoleKeyCollisionAttempts = 100
+
+	retireAndRemoveOutputScript = `
+def out = ctx._source['outputs'];
+if (out==null)
+  {out=new HashMap(); ctx._source['outputs']=out;}
+def cur = out[params.current_output];
+if (cur==null)
+  {cur=new HashMap(); out[params.current_output]=cur;}
+if (cur.to_retire_api_key_ids==null)
+  {cur.to_retire_api_key_ids=new ArrayList();}
+if (!cur.to_retire_api_key_ids.contains(params.to_retire_api_key_ids))
+  {cur.to_retire_api_key_ids.add(params.to_retire_api_key_ids);}
+out.remove(params.removed_output);
+`
 )
 
 var (
@@ -140,35 +156,11 @@ func (p *Output) prepareElasticsearch(
 	}
 
 	if toRetireAPIKeys != nil {
-
-		// adding remote API key to new output toRetireAPIKeys
-		fields := map[string]any{
-			dl.FieldPolicyOutputToRetireAPIKeyIDs: *toRetireAPIKeys,
-		}
-
-		// Using painless script to append the old keys to the history
-		body, err := renderUpdatePainlessScript(p.Name, fields)
+		body, err := renderRetireAndRemoveOutputScript(p.Name, *toRetireAPIKeys, removedOutputName)
 		if err != nil {
-			return fmt.Errorf("could not update painless script: %w", err)
+			return fmt.Errorf("could not create output retirement script: %w", err)
 		}
-
-		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
-			zlog.Error().Err(err).Msg("fail update agent record")
-			return fmt.Errorf("fail update agent record: %w", err)
-		}
-
-		// remove output from agent doc
-		body, err = json.Marshal(map[string]any{
-			"script": map[string]any{
-				"lang":   "painless",
-				"source": fmt.Sprintf("ctx._source['outputs'].remove(\"%s\")", removedOutputName),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("could not create request body to update agent: %w", err)
-		}
-
-		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 			zlog.Error().Err(err).Msg("fail update agent record")
 			return fmt.Errorf("fail update agent record: %w", err)
 		}
@@ -190,7 +182,7 @@ func (p *Output) prepareElasticsearch(
 		zlog.Debug().Msg("must generate api key as remote output config changed")
 		needNewKey = true
 	case p.Role.Sha2 != output.PermissionsHash:
-		// the is actually the OutputPermissionsHash for the default hash. The Agent
+		// this is actually the OutputPermissionsHash for the default hash. The Agent
 		// document on ES does not have OutputPermissionsHash for any other output
 		// besides the default one. It seems to me error-prone to rely on the default
 		// output permissions hash to generate new API keys for other outputs.
@@ -249,7 +241,7 @@ func (p *Output) prepareElasticsearch(
 			return err
 		}
 
-		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 			zlog.Error().Err(err).Msg("fail update agent record")
 			return err
 		}
@@ -330,13 +322,13 @@ func (p *Output) prepareElasticsearch(
 			return fmt.Errorf("could not update painless script: %w", err)
 		}
 
-		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+		if err = bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 			zlog.Error().Err(err).Msg("fail update agent record")
 			return fmt.Errorf("fail update agent record: %w", err)
 		}
 
 		// Now that all is done, we can update the output on the agent variable
-		// Right not it's more for consistency and to ensure the in-memory agent
+		// Right now it's more for consistency and to ensure the in-memory agent
 		// data is correct and in sync with ES, so it can be safely used after
 		// this method returns.
 		output.Type = OutputTypeElasticsearch
@@ -435,7 +427,7 @@ func mergeRoles(zlog zerolog.Logger, old, new *RoleT) (*RoleT, error) {
 		}
 
 		// 1 should be enough, 100 is just to have some space
-		for i := range 100 {
+		for i := range maxRoleKeyCollisionAttempts {
 			c := fmt.Sprintf("%s-%d-rdstale", candidate, i)
 
 			if _, exists := m[c]; !exists {
@@ -511,6 +503,21 @@ ctx._source['outputs']['%s'].%s=params.%s;`,
 	})
 
 	return body, err
+}
+
+func renderRetireAndRemoveOutputScript(currentOutputName string, toRetire model.ToRetireAPIKeyIdsItems, removedOutputName string) ([]byte, error) {
+	params := map[string]any{
+		dl.FieldPolicyOutputToRetireAPIKeyIDs: toRetire,
+		"current_output":                      currentOutputName,
+		"removed_output":                      removedOutputName,
+	}
+	return json.Marshal(map[string]any{
+		"script": map[string]any{
+			"lang":   "painless",
+			"source": retireAndRemoveOutputScript,
+			"params": params,
+		},
+	})
 }
 
 func generateOutputAPIKey(

@@ -1549,7 +1549,7 @@ func Test_SmokeTest_Verify_v85Migrate(t *testing.T) {
 		resp.Item.Id,
 		p,
 		bulk.WithRefresh(),
-		bulk.WithRetryOnConflict(3),
+		bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries),
 	)
 	require.NoError(t, err)
 

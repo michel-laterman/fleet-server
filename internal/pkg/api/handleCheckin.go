@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand"
 	"net/http"
 	"reflect"
@@ -33,7 +34,6 @@ import (
 	"github.com/elastic/fleet-server/v7/internal/pkg/model"
 	"github.com/elastic/fleet-server/v7/internal/pkg/monitor"
 	"github.com/elastic/fleet-server/v7/internal/pkg/policy"
-	"github.com/elastic/fleet-server/v7/internal/pkg/secret"
 	"github.com/elastic/fleet-server/v7/internal/pkg/sqn"
 
 	"github.com/hashicorp/go-version"
@@ -47,7 +47,6 @@ import (
 var (
 	ErrAgentNotFound          = errors.New("agent not found")
 	ErrNoPolicyOutput         = errors.New("output section not found")
-	ErrFailInjectAPIKey       = errors.New("failure to inject api key")
 	ErrInvalidUpgradeMetadata = errors.New("invalid upgrade metadata")
 )
 
@@ -570,7 +569,7 @@ func (ct *CheckinT) processUpgradeDetails(ctx context.Context, agent *model.Agen
 	if err != nil {
 		return err
 	}
-	return ct.bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3))
+	return ct.bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries))
 }
 
 func (ct *CheckinT) markUpgradeComplete(ctx context.Context, agent *model.Agent) error {
@@ -591,7 +590,7 @@ func (ct *CheckinT) markUpgradeComplete(ctx context.Context, agent *model.Agent)
 	if err != nil {
 		return err
 	}
-	return ct.bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3))
+	return ct.bulker.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries))
 }
 
 func (ct *CheckinT) writeResponse(zlog zerolog.Logger, w http.ResponseWriter, r *http.Request, agent *model.Agent, resp CheckinResponse) error {
@@ -895,21 +894,20 @@ func processPolicy(ctx context.Context, zlog zerolog.Logger, bulker bulk.Bulk, a
 		return nil, ErrNoPolicyOutput
 	}
 
-	// Get secret values so secret references in outputs and inputs can be replaced
-	// with their corresponding values.
-	secretValues, err := secret.GetSecretValues(ctx, pp.Policy.Data.SecretReferences, bulker)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get secret values: %w", err)
-	}
-
-	data := model.ClonePolicyData(pp.Policy.Data)
-	for _, policyOutput := range data.Outputs {
-		// NOTE: Not sure if output secret keys collected here include new entries, but they are collected for completeness
-		ks, err := secret.ProcessOutputSecret(policyOutput, secretValues)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process output secret for output %q: %w", policyOutput["name"], err)
-		}
-		pp.SecretKeys = append(pp.SecretKeys, ks...)
+	data := &model.PolicyData{
+		Agent:             pp.Policy.Data.Agent,
+		Fleet:             pp.Policy.Data.Fleet,
+		ID:                pp.Policy.Data.ID,
+		OutputPermissions: pp.Policy.Data.OutputPermissions,
+		Revision:          pp.Policy.Data.Revision,
+		Signed:            pp.Policy.Data.Signed,
+		Service:           pp.Policy.Data.Service,
+		Connectors:        pp.Policy.Data.Connectors,
+		Extensions:        pp.Policy.Data.Extensions,
+		Processors:        pp.Policy.Data.Processors,
+		Receivers:         pp.Policy.Data.Receivers,
+		Outputs:           cloneOutputsMap(pp.Policy.Data.Outputs),
+		Exporters:         cloneExportersMap(pp.Policy.Data.Exporters),
 	}
 	// Iterate through the policy outputs and prepare them
 	for _, policyOutput := range pp.Outputs {
@@ -926,20 +924,13 @@ func processPolicy(ctx context.Context, zlog zerolog.Logger, bulker bulk.Bulk, a
 	// Add replace inputs with agent prepared version.
 	data.Inputs = pp.Inputs
 
-	// JSON transformations to turn a model.PolicyData into an Action.data
-	p, err := json.Marshal(data)
+	d, err := modelPolicyDataToAPI(data)
 	if err != nil {
 		return nil, err
 	}
-	d := PolicyData{}
-	err = json.Unmarshal(p, &d)
-	if err != nil {
-		return nil, err
-	}
-	// remove duplicates from secretkeys
-	slices.Sort(pp.SecretKeys)
-	keys := slices.Compact(pp.SecretKeys)
-	d.SecretPaths = keys
+	secretKeys := slices.Clone(pp.SecretKeys)
+	slices.Sort(secretKeys)
+	d.SecretPaths = slices.Compact(secretKeys)
 	ad := Action_Data{}
 	err = ad.FromActionPolicyChange(ActionPolicyChange{d})
 	if err != nil {
@@ -956,6 +947,90 @@ func processPolicy(ctx context.Context, zlog zerolog.Logger, bulker bulk.Bulk, a
 	}
 
 	return &resp, nil
+}
+
+func cloneOutputsMap(src map[string]map[string]any) map[string]map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = maps.Clone(v)
+	}
+	return dst
+}
+
+func cloneExportersMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		if m, ok := v.(map[string]any); ok {
+			dst[k] = maps.Clone(m)
+		} else {
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+func modelPolicyDataToAPI(data *model.PolicyData) (PolicyData, error) {
+	d := PolicyData{
+		Agent:      data.Agent,
+		Connectors: data.Connectors,
+		Extensions: data.Extensions,
+		Fleet:      data.Fleet,
+		Id:         data.ID,
+		Inputs:     data.Inputs,
+		Processors: data.Processors,
+		Receivers:  data.Receivers,
+		Revision:   int(data.Revision), //nolint:gosec // revision counts cannot realistically overflow int
+	}
+	if len(data.Outputs) > 0 {
+		d.Outputs = make(map[string]any, len(data.Outputs))
+		for k, v := range data.Outputs {
+			d.Outputs[k] = v
+		}
+	}
+	if len(data.OutputPermissions) > 0 {
+		if err := json.Unmarshal(data.OutputPermissions, &d.OutputPermissions); err != nil {
+			return PolicyData{}, fmt.Errorf("modelPolicyDataToAPI: unmarshal output_permissions: %w", err)
+		}
+	}
+	if data.Signed != nil {
+		d.Signed = &ActionSignature{
+			Data:      data.Signed.Data,
+			Signature: data.Signed.Signature,
+		}
+	}
+	if data.Service != nil {
+		svc := &OtelConfigService{
+			Extensions: data.Service.Extensions,
+		}
+		if len(data.Service.Pipelines) > 0 {
+			svc.Pipelines = make(map[string]struct {
+				Exporters  []string `json:"exporters,omitempty"`
+				Processors []string `json:"processors,omitempty"`
+				Receivers  []string `json:"receivers,omitempty"`
+			}, len(data.Service.Pipelines))
+			for k, v := range data.Service.Pipelines {
+				if v != nil {
+					svc.Pipelines[k] = struct {
+						Exporters  []string `json:"exporters,omitempty"`
+						Processors []string `json:"processors,omitempty"`
+						Receivers  []string `json:"receivers,omitempty"`
+					}{
+						Exporters:  v.Exporters,
+						Processors: v.Processors,
+						Receivers:  v.Receivers,
+					}
+				}
+			}
+		}
+		d.Service = svc
+	}
+	return d, nil
 }
 
 // prepareOTelExporters prepares OTel exporters by copying credentials and potentially other

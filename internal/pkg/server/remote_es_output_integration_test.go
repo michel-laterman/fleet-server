@@ -392,7 +392,7 @@ func Test_Agent_Remote_ES_Output_ForceUnenroll(t *testing.T) {
 	}
 	body, err := doc.Marshal()
 	require.NoError(t, err)
-	err = srv.bulker.Update(ctx, dl.FleetAgents, resp.Item.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3))
+	err = srv.bulker.Update(ctx, dl.FleetAgents, resp.Item.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries))
 	require.NoError(t, err)
 
 	t.Log("Checkin so that invalidate logic runs")

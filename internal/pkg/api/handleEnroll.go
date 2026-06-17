@@ -640,7 +640,7 @@ func updateFleetAgent(ctx context.Context, bulker bulk.Bulk, id string, doc bulk
 	if err != nil {
 		return err
 	}
-	return bulker.Update(ctx, dl.FleetAgents, id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3))
+	return bulker.Update(ctx, dl.FleetAgents, id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries))
 }
 
 func createFleetAgent(ctx context.Context, bulker bulk.Bulk, id string, agent model.Agent) error {

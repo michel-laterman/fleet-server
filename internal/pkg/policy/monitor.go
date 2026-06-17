@@ -306,12 +306,13 @@ func (m *monitorT) dispatchPending(ctx context.Context) {
 			return
 		}
 
+		pp := policy.pp
 		select {
 		case <-ctx.Done():
 			m.pendingQ.pushFront(s) // context cancelled before sub is handled, put it back
 			m.log.Debug().Err(ctx.Err()).Msg("context termination detected in policy dispatch")
 			return
-		case s.ch <- &policy.pp:
+		case s.ch <- &pp:
 			m.log.Debug().
 				Str(ecs.PolicyID, s.policyID).
 				Int64("subscription_revision_idx", s.revIdx).
@@ -319,7 +320,7 @@ func (m *monitorT) dispatchPending(ctx context.Context) {
 				Msg("dispatch policy change")
 		default:
 			// Should never block on a channel; we created a channel of size one.
-			// A block here indicates a logic error somewheres.
+			// A block here indicates a logic error somewhere.
 			m.log.Error().
 				Str(ecs.PolicyID, s.policyID).
 				Str(ecs.AgentID, s.agentID).
@@ -376,7 +377,7 @@ func (m *monitorT) processPolicies(ctx context.Context, policies []model.Policy)
 	m.log.Debug().Int64(ecs.RevisionIdx, policies[0].RevisionIdx).
 		Str(ecs.PolicyID, policies[0].PolicyID).Msg("process policies")
 
-	latest := m.groupByLatest(policies)
+	latest := groupByLatest(policies)
 	for _, policy := range latest {
 		pp, err := NewParsedPolicy(ctx, m.bulker, policy)
 		if err != nil {
@@ -401,10 +402,6 @@ func groupByLatest(policies []model.Policy) map[string]model.Policy {
 		}
 	}
 	return latest
-}
-
-func (m *monitorT) groupByLatest(policies []model.Policy) map[string]model.Policy {
-	return groupByLatest(policies)
 }
 
 func (m *monitorT) updatePolicy(ctx context.Context, pp *ParsedPolicy) bool {
@@ -531,7 +528,7 @@ func (m *monitorT) Subscribe(agentID string, policyID string, revisionIdx int64)
 		m.pendingQ.pushBack(s)
 		m.log.Debug().
 			Str(ecs.AgentID, s.agentID).
-			Int64(ecs.RevisionIdx, (&p.pp.Policy).RevisionIdx).
+			Int64(ecs.RevisionIdx, p.pp.Policy.RevisionIdx).
 			Msg("deploy pending on subscribe")
 		if empty {
 			m.kickDeploy()
@@ -540,7 +537,7 @@ func (m *monitorT) Subscribe(agentID string, policyID string, revisionIdx int64)
 		m.log.Debug().
 			Str(ecs.PolicyID, policyID).
 			Str(ecs.AgentID, s.agentID).
-			Int64(ecs.RevisionIdx, (&p.pp.Policy).RevisionIdx).
+			Int64(ecs.RevisionIdx, p.pp.Policy.RevisionIdx).
 			Msg("subscription added without new revision")
 		p.head.pushBack(s)
 	}
@@ -569,7 +566,7 @@ func (m *monitorT) Unsubscribe(sub Subscription) error {
 }
 
 // LatestRev returns the revision_idx for the passed policy ID.
-// If the policy does not exist in the map, then all policies are foribly reloaded.
+// If the policy does not exist in the map, then all policies are forcibly reloaded.
 // On an error with the reload, or if the policy does not exist a 0 is returned.
 func (m *monitorT) LatestRev(ctx context.Context, id string) int64 {
 	if id == "" {

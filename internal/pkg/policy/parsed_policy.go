@@ -58,7 +58,7 @@ type ParsedPolicy struct {
 
 func NewParsedPolicy(ctx context.Context, bulker bulk.Bulk, p model.Policy) (*ParsedPolicy, error) {
 	var err error
-	secretKeys := make([]string, 0)
+	secretKeys := make([]string, 0, len(p.Data.Outputs)*4+len(p.Data.Inputs)*8)
 	// Interpret the output permissions if available
 	var roles map[string]RoleT
 	if roles, err = parsePerms(p.Data.OutputPermissions); err != nil {
@@ -174,7 +174,7 @@ func constructPolicyOutputs(outputs map[string]map[string]any, roles map[string]
 	result := make(map[string]Output, len(outputs))
 
 	for k, v := range outputs {
-		typeStr, ok := v["type"].(string)
+		typeStr, ok := v[FieldOutputType].(string)
 		if !ok {
 			return nil, fmt.Errorf("missing or invalid output type: %+v", v)
 		}
@@ -233,7 +233,7 @@ func findDefaultOutputName(outputs map[string]map[string]any) (string, error) {
 	var ESdefaults []string
 	for k, v := range outputs {
 		if v != nil {
-			typeStr, ok := v["type"].(string)
+			typeStr, ok := v[FieldOutputType].(string)
 			if ok && typeStr == OutputTypeElasticsearch {
 				ESdefaults = append(ESdefaults, k)
 				continue

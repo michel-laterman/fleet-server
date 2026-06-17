@@ -5,7 +5,6 @@
 package policy
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -50,5 +49,5 @@ func RevisionFromString(actionID string) (Revision, bool) {
 
 // String returns the ID string for the policy revision.
 func (a *Revision) String() string {
-	return fmt.Sprintf("policy:%s:%d", a.PolicyID, a.RevisionIdx)
+	return "policy:" + a.PolicyID + ":" + strconv.FormatInt(a.RevisionIdx, 10)
 }

@@ -112,7 +112,7 @@ func (audit *AuditT) markUnenroll(ctx context.Context, zlog zerolog.Logger, req 
 		return fmt.Errorf("auditUnenroll marshal: %w", err)
 	}
 
-	if err := audit.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+	if err := audit.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 		return fmt.Errorf("auditUnenroll update: %w", err)
 	}
 

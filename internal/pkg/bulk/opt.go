@@ -30,6 +30,10 @@ type optionsT struct {
 
 type Opt func(*optionsT)
 
+// AgentDocConflictRetries is the number of times an agent document update is retried
+// on an Elasticsearch version conflict before returning an error.
+const AgentDocConflictRetries = 3
+
 func WithRefresh() Opt {
 	return func(opt *optionsT) {
 		opt.Refresh = true

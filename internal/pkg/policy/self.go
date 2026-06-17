@@ -112,12 +112,9 @@ LOOP:
 			cT.Reset(m.checkTime)
 			m.log.Trace().Msg(state.String())
 		case hits := <-s.Output():
-			policies := make([]model.Policy, len(hits))
-			for i, hit := range hits {
-				err := hit.Unmarshal(&policies[i])
-				if err != nil {
-					return err
-				}
+			policies, err := unmarshalHits(hits)
+			if err != nil {
+				return err
 			}
 			state, err := m.processPolicies(ctx, policies)
 			if err != nil {
@@ -169,7 +166,7 @@ func (m *selfMonitorT) processPolicies(ctx context.Context, policies []model.Pol
 		// nothing to do
 		return client.UnitStateStarting, nil
 	}
-	latest := m.groupByLatest(policies)
+	latest := groupByLatest(policies)
 	for i := range latest {
 		policy := latest[i]
 		if m.policyID != "" && policy.PolicyID == m.policyID {
@@ -181,10 +178,6 @@ func (m *selfMonitorT) processPolicies(ctx context.Context, policies []model.Pol
 		}
 	}
 	return m.updateState(ctx)
-}
-
-func (m *selfMonitorT) groupByLatest(policies []model.Policy) map[string]model.Policy {
-	return groupByLatest(policies)
 }
 
 func (m *selfMonitorT) updateState(ctx context.Context) (client.UnitState, error) {

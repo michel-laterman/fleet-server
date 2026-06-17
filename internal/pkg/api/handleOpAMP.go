@@ -600,5 +600,5 @@ func (oa *OpAMPT) unenrollAgent(ctx context.Context, zlog zerolog.Logger, agentI
 	if err != nil {
 		return err
 	}
-	return oa.bulk.Update(ctx, dl.FleetAgents, agentID, body, bulk.WithRetryOnConflict(3))
+	return oa.bulk.Update(ctx, dl.FleetAgents, agentID, body, bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries))
 }

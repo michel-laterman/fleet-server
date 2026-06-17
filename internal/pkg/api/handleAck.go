@@ -527,7 +527,7 @@ func (ack *AckT) updateAgentDoc(ctx context.Context,
 		agentID,
 		body,
 		bulk.WithRefresh(),
-		bulk.WithRetryOnConflict(3),
+		bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries),
 	)
 
 	zlog.Err(err).
@@ -593,7 +593,7 @@ func (ack *AckT) handleUnenroll(ctx context.Context, zlog zerolog.Logger, agent 
 		return fmt.Errorf("handleUnenroll marshal: %w", err)
 	}
 
-	if err = ack.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+	if err = ack.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 		return fmt.Errorf("handleUnenroll update: %w", err)
 	}
 
@@ -636,7 +636,7 @@ func (ack *AckT) handleUpgrade(ctx context.Context, zlog zerolog.Logger, agent *
 		return fmt.Errorf("handleUpgrade marshal: %w", err)
 	}
 
-	if err = ack.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(3)); err != nil {
+	if err = ack.bulk.Update(ctx, dl.FleetAgents, agent.Id, body, bulk.WithRefresh(), bulk.WithRetryOnConflict(bulk.AgentDocConflictRetries)); err != nil {
 		return fmt.Errorf("handleUpgrade update: %w", err)
 	}
 
