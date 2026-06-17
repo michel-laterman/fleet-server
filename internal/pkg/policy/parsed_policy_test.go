@@ -193,3 +193,22 @@ func TestParsedPolicyOTELSecretsReplacement(t *testing.T) {
 	spanmetricsMap := pp.Policy.Data.Connectors["spanmetrics"].(map[string]any)
 	require.Equal(t, "connector-token-id_value", spanmetricsMap["token"])
 }
+
+func BenchmarkNewParsedPolicy(b *testing.B) {
+	var m model.Policy
+	var d model.PolicyData
+	if err := json.Unmarshal([]byte(minified), &d); err != nil {
+		b.Fatal(err)
+	}
+	m.Data = &d
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, err := NewParsedPolicy(b.Context(), nil, m)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

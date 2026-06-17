@@ -5,11 +5,28 @@
 package model
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func BenchmarkClonePolicyData(b *testing.B) {
+	raw, err := os.ReadFile("../policy/testdata/test_policy_minified.json")
+	require.NoError(b, err)
+	var d PolicyData
+	require.NoError(b, json.Unmarshal(raw, &d))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_ = ClonePolicyData(&d)
+	}
+}
 
 func TestAgentGetNewVersion(t *testing.T) {
 	tests := []struct {

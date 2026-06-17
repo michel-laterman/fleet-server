@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1505,4 +1506,47 @@ func TestProcessPolicyDetails(t *testing.T) {
 		assert.Equal(t, int64(1), revIDX)
 		assert.Empty(t, opts)
 	})
+}
+
+// BenchmarkProcessPolicy measures the per-agent hot path: ClonePolicyData,
+// secret processing, output preparation, and the marshal/unmarshal type conversion.
+// The agent is pre-configured with a matching permission hash so no ES calls are made.
+func BenchmarkProcessPolicy(b *testing.B) {
+	raw, err := os.ReadFile("../policy/testdata/test_policy_minified.json")
+	require.NoError(b, err)
+
+	var d model.PolicyData
+	require.NoError(b, json.Unmarshal(raw, &d))
+
+	m := model.Policy{Data: &d}
+	pp, err := policy.NewParsedPolicy(b.Context(), nil, m)
+	require.NoError(b, err)
+
+	// Pre-populate agent outputs with the already-computed permission hash so
+	// prepareElasticsearch takes the no-new-key path (no bulker calls).
+	defaultOutput := pp.Outputs[pp.Default.Name]
+	agent := &model.Agent{
+		ESDocument: model.ESDocument{Id: "bench-agent-id"},
+		Agent:      &model.AgentMetadata{ID: "bench-agent-id"},
+		Outputs: map[string]*model.PolicyOutput{
+			pp.Default.Name: {
+				APIKey:          "bench-key-id:bench-api-key",
+				APIKeyID:        "bench-key-id",
+				PermissionsHash: defaultOutput.Role.Sha2,
+			},
+		},
+	}
+
+	bulker := ftesting.NewMockBulk()
+	zlog := zerolog.Nop()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, err := processPolicy(b.Context(), zlog, bulker, agent, pp)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
