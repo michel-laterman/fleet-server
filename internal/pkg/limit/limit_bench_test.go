@@ -20,7 +20,7 @@ var benchSinkReleaseFunc ReleaseFunc
 
 // BenchmarkLimiterAcquireNoLimit measures Acquire when no limits are configured.
 func BenchmarkLimiterAcquireNoLimit(b *testing.B) {
-	l := &Limiter{}
+	l := &Limiter{releaseFunc: noop}
 	b.ReportAllocs()
 	for b.Loop() {
 		rf, err := l.Acquire()
@@ -32,11 +32,10 @@ func BenchmarkLimiterAcquireNoLimit(b *testing.B) {
 }
 
 // BenchmarkLimiterAcquireWithMax measures Acquire when maxLimit is configured.
-// The current implementation binds l.release as a new method value (heap alloc) on every call.
+// The releaseFunc is pre-bound at construction (mirroring NewLimiter) — 0 allocs per call.
 func BenchmarkLimiterAcquireWithMax(b *testing.B) {
-	l := &Limiter{
-		maxLimit: semaphore.NewWeighted(1),
-	}
+	l := &Limiter{maxLimit: semaphore.NewWeighted(1)}
+	l.releaseFunc = l.release // pre-bind once, as NewLimiter does
 	b.ReportAllocs()
 	for b.Loop() {
 		rf, err := l.Acquire()
