@@ -17,9 +17,23 @@ var DefaultSeqNo = []int64{UndefinedSeqNo}
 // SeqNo abstracts the array of document seq numbers.
 type SeqNo []int64
 
+// AppendJSON appends the JSON-encoded SeqNo to dst and returns the result.
+func (s SeqNo) AppendJSON(dst []byte) []byte {
+	if len(s) == 0 {
+		return append(dst, '[', ']')
+	}
+	dst = append(dst, '[')
+	dst = strconv.AppendInt(dst, s[0], 10)
+	for i := 1; i < len(s); i++ {
+		dst = append(dst, ',')
+		dst = strconv.AppendInt(dst, s[i], 10)
+	}
+	return append(dst, ']')
+}
+
 // JSONString returns SeqNo as a JSON encoded array.
 func (s SeqNo) JSONString() string {
-	return s.toString(true)
+	return string(s.AppendJSON(nil))
 }
 
 // String returns SeqNo as a comma separated list.

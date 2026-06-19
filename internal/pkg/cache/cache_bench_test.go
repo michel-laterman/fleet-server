@@ -7,13 +7,10 @@
 package cache
 
 import (
-	"hash"
-	"hash/fnv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/elastic/fleet-server/v7/internal/pkg/config"
 )
@@ -34,8 +31,7 @@ var (
 
 // --- Scoped key construction benchmarks (isolated, no Ristretto) ---
 
-// BenchmarkScopedKeyConcat benchmarks the current "prefix" + id string concatenation.
-// This is the hot path in ValidAPIKey and SetAPIKey — one heap alloc per call.
+// BenchmarkScopedKeyConcat benchmarks the old "prefix" + id string concatenation baseline.
 func BenchmarkScopedKeyConcat(b *testing.B) {
 	id := benchAPIKeyID
 	b.ReportAllocs()
@@ -44,8 +40,8 @@ func BenchmarkScopedKeyConcat(b *testing.B) {
 	}
 }
 
-// keyBuilderPool is the proposed pooled strings.Builder for scoped key construction.
-// The builder's internal buffer is reused across calls; b.String() still allocates 1 string.
+// keyBuilderPool shows the pooled strings.Builder approach, retained for comparison.
+// b.String() still allocates 1 string — measured to be worse than concat.
 var keyBuilderPool = sync.Pool{
 	New: func() any {
 		sb := new(strings.Builder)
@@ -55,7 +51,6 @@ var keyBuilderPool = sync.Pool{
 }
 
 // BenchmarkScopedKeyPooledBuilder benchmarks the pooled strings.Builder approach.
-// Reuses the builder's byte buffer, so no buffer reallocation after warmup.
 func BenchmarkScopedKeyPooledBuilder(b *testing.B) {
 	id := benchAPIKeyID
 	b.ReportAllocs()
@@ -69,51 +64,31 @@ func BenchmarkScopedKeyPooledBuilder(b *testing.B) {
 	}
 }
 
-// keyHasherPool is a pool of FNV-64a hashers used to compute a uint64 key
-// from prefix+id without materialising the combined string at all.
-var keyHasherPool = sync.Pool{
-	New: func() any { return fnv.New64a() },
-}
-
-// unsafeBytes converts a string to []byte without allocation.
-// The caller must not modify the returned slice.
-func unsafeBytes(s string) []byte {
-	return unsafe.Slice(unsafe.StringData(s), len(s))
-}
-
-// BenchmarkScopedKeyHash benchmarks computing a uint64 hash of "api:"+id
-// using a pooled FNV hasher — 0 string allocs for key construction.
+// BenchmarkScopedKeyHash benchmarks the production uint64 hash path — 0 allocs.
 func BenchmarkScopedKeyHash(b *testing.B) {
 	id := benchAPIKeyID
 	b.ReportAllocs()
 	for b.Loop() {
-		h := keyHasherPool.Get().(hash.Hash64)
-		h.Reset()
-		h.Write(unsafeBytes("api:"))
-		h.Write(unsafeBytes(id))
-		benchSinkU64 = h.Sum64()
-		keyHasherPool.Put(h)
+		benchSinkU64 = scopedKeyHash("api:", id)
 	}
 }
 
 // --- makeArtifactKey benchmarks ---
 
-// BenchmarkArtifactKeyFmt benchmarks the current makeArtifactKey using fmt.Sprintf.
-// fmt.Sprintf boxes the variadic arguments and uses reflection-based formatting.
-func BenchmarkArtifactKeyFmt(b *testing.B) {
-	b.ReportAllocs()
-	for b.Loop() {
-		benchSinkStr = makeArtifactKey(benchArtIdent, benchArtSHA2)
-	}
-}
-
-// BenchmarkArtifactKeyConcat benchmarks the proposed plain string concat.
-// Eliminates fmt overhead; single alloc for the result string.
+// BenchmarkArtifactKeyConcat benchmarks the old plain string concat baseline.
 func BenchmarkArtifactKeyConcat(b *testing.B) {
 	ident, sha2 := benchArtIdent, benchArtSHA2
 	b.ReportAllocs()
 	for b.Loop() {
 		benchSinkStr = "artifact:" + ident + ":" + sha2
+	}
+}
+
+// BenchmarkArtifactKeyHash benchmarks the production uint64 hash path — 0 allocs.
+func BenchmarkArtifactKeyHash(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		benchSinkU64 = artifactKeyHash(benchArtIdent, benchArtSHA2)
 	}
 }
 
@@ -132,8 +107,8 @@ func newBenchCache(b *testing.B) *CacheT {
 	return c
 }
 
-// BenchmarkValidAPIKeyMiss benchmarks the current ValidAPIKey on a cache miss.
-// Key construction allocates 1 string ("api:" + key.ID) per call.
+// BenchmarkValidAPIKeyMiss benchmarks ValidAPIKey on a cache miss.
+// Key construction uses a pooled FNV hasher — 0 string allocs.
 func BenchmarkValidAPIKeyMiss(b *testing.B) {
 	c := newBenchCache(b)
 	defer c.cache.Close()
@@ -141,44 +116,5 @@ func BenchmarkValidAPIKeyMiss(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		benchSinkBool = c.ValidAPIKey(key)
-	}
-}
-
-// validAPIKeyHashKey is the proposed ValidAPIKey implementation that hashes the
-// prefix+ID directly to a uint64, eliminating the "api:"+key.ID string allocation.
-func validAPIKeyHashKey(c *CacheT, key APIKey) bool {
-	c.mut.RLock()
-	defer c.mut.RUnlock()
-
-	h := keyHasherPool.Get().(hash.Hash64)
-	h.Reset()
-	h.Write(unsafeBytes("api:"))
-	h.Write(unsafeBytes(key.ID))
-	keyHash := h.Sum64()
-	keyHasherPool.Put(h)
-
-	v, ok := c.cache.Get(keyHash)
-	if ok {
-		switch v {
-		case "":
-			ok = false
-		case key.Key:
-			// valid
-		default:
-			ok = false
-		}
-	}
-	return ok
-}
-
-// BenchmarkValidAPIKeyMissHashKey benchmarks the proposed uint64-keyed ValidAPIKey.
-// Key construction: 0 string allocs — hash computed into uint64 via pooled FNV hasher.
-func BenchmarkValidAPIKeyMissHashKey(b *testing.B) {
-	c := newBenchCache(b)
-	defer c.cache.Close()
-	key := benchAPIKeyVal
-	b.ReportAllocs()
-	for b.Loop() {
-		benchSinkBool = validAPIKeyHashKey(c, key)
 	}
 }

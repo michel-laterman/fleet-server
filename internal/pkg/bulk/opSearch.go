@@ -111,7 +111,7 @@ func (b *Bulker) writeMsearchMeta(buf *Buf, index string, moreIndices []string, 
 		}
 		_, _ = buf.WriteString(` "wait_for_checkpoints": `)
 		// Write array as string, example: [1,2,3]
-		_, _ = buf.WriteString(sqn.SeqNo(checkpoints).JSONString())
+		buf.Set(sqn.SeqNo(checkpoints).AppendJSON(buf.Bytes()))
 	}
 
 	_, _ = buf.WriteString("}\n")

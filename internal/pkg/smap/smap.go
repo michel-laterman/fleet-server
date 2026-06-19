@@ -60,7 +60,9 @@ func (m Map) Hash() (string, error) {
 		return "", err
 	}
 
-	return hex.EncodeToString(h.Sum(nil)), nil
+	var digest [sha256.Size]byte
+	h.Sum(digest[:0])
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // Marshal encodes the Map as a json object.
@@ -136,7 +138,6 @@ func (m Map) Set(keyPath string, value any) error {
 	for i, part := range parts {
 		key = part
 		parent = curr
-		parentPath := strings.Join(parts[:i], ".")
 
 		// Check if part is an index
 		index, isIndex = parseIndex(part)
@@ -146,16 +147,16 @@ func (m Map) Set(keyPath string, value any) error {
 			if isIndex {
 				sParent, ok := parent.([]any)
 				if !ok {
-					return fmt.Errorf("expected slice at %s, got %T", parentPath, parent)
+					return fmt.Errorf("expected slice at %s, got %T", strings.Join(parts[:i], "."), parent)
 				}
 				if index >= uint(len(sParent)) {
-					return fmt.Errorf("index out of bounds at %s: %d", parentPath, index)
+					return fmt.Errorf("index out of bounds at %s: %d", strings.Join(parts[:i], "."), index)
 				}
 				sParent[index] = value
 			} else {
 				mParent, ok := isSMap(parent)
 				if !ok {
-					return fmt.Errorf("expected map at %s, got %T", parentPath, parent)
+					return fmt.Errorf("expected map at %s, got %T", strings.Join(parts[:i], "."), parent)
 				}
 				mParent[key] = value
 			}
@@ -166,16 +167,16 @@ func (m Map) Set(keyPath string, value any) error {
 		if isIndex {
 			sCurr, ok := curr.([]any)
 			if !ok {
-				return fmt.Errorf("expected slice at %s, got %T", parentPath, curr)
+				return fmt.Errorf("expected slice at %s, got %T", strings.Join(parts[:i], "."), curr)
 			}
 			if index >= uint(len(sCurr)) {
-				return fmt.Errorf("index out of bounds at %s: %d", parentPath, index)
+				return fmt.Errorf("index out of bounds at %s: %d", strings.Join(parts[:i], "."), index)
 			}
 			curr = sCurr[index]
 		} else {
 			mCurr, ok := isSMap(curr)
 			if !ok {
-				return fmt.Errorf("expected map at %s, got %T", parentPath, curr)
+				return fmt.Errorf("expected map at %s, got %T", strings.Join(parts[:i], "."), curr)
 			}
 			curr = mCurr[key]
 		}

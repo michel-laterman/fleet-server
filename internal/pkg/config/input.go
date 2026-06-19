@@ -7,6 +7,7 @@ package config
 import (
 	"compress/flate"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,7 +155,11 @@ func bindAddress(host string, port uint16) string {
 	if strings.Count(host, ":") > 1 && strings.Count(host, "]") == 0 {
 		host = "[" + host + "]"
 	}
-	return fmt.Sprintf("%s:%d", host, port)
+	buf := make([]byte, 0, len(host)+1+5) // host + ":" + up to 5 port digits
+	buf = append(buf, host...)
+	buf = append(buf, ':')
+	buf = strconv.AppendUint(buf, uint64(port), 10)
+	return string(buf)
 }
 
 // Input is the input defined by Agent to run Fleet Server.

@@ -6,6 +6,7 @@
 package apikey
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -43,10 +44,11 @@ type APIKeyMetadata struct {
 // Read gathers APIKeyMetadata from Elasticsearch using the given client.
 func Read(ctx context.Context, client *elasticsearch.Client, id string, withOwner bool) (*APIKeyMetadata, error) {
 
-	opts := []func(*esapi.SecurityGetAPIKeyRequest){
+	opts := make([]func(*esapi.SecurityGetAPIKeyRequest), 0, 3)
+	opts = append(opts,
 		client.Security.GetAPIKey.WithContext(ctx),
 		client.Security.GetAPIKey.WithID(id),
-	}
+	)
 	if withOwner {
 		opts = append(opts, client.Security.GetAPIKey.WithOwner(true))
 	}
@@ -108,29 +110,25 @@ func NewAPIKeyFromToken(token string) (*APIKey, error) {
 	if !utf8.Valid(d) {
 		return nil, ErrInvalidToken
 	}
-	s := strings.Split(string(d), ":")
-	if len(s) != 2 {
+	idBytes, keyBytes, ok := bytes.Cut(d, []byte(":"))
+	if !ok {
 		return nil, ErrMalformedToken
 	}
 
-	// interpret id:key
-	apiKey := APIKey{
-		ID:  s[0],
-		Key: s[1],
-	}
-
-	return &apiKey, nil
+	return &APIKey{
+		ID:  string(idBytes),
+		Key: string(keyBytes),
+	}, nil
 }
 
 // Token returns the b64 encoded token of the APIKey.
 func (k APIKey) Token() string {
-	s := fmt.Sprintf("%s:%s", k.ID, k.Key)
-	return base64.StdEncoding.EncodeToString([]byte(s))
+	return base64.StdEncoding.EncodeToString([]byte(k.ID + ":" + k.Key))
 }
 
 // Agent provides a string consisting of "ID:Key"
 func (k APIKey) Agent() string {
-	return fmt.Sprintf("%s:%s", k.ID, k.Key)
+	return k.ID + ":" + k.Key
 }
 
 // ExtractAPIKey gathers to APIKey associated with the request.

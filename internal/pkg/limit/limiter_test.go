@@ -43,7 +43,7 @@ func Test_Limiter_Wrap(t *testing.T) {
 		status int
 	}{{
 		name: "no limits",
-		l:    &Limiter{},
+		l:    &Limiter{releaseFunc: noop},
 		stats: func() *mockIncer {
 			m := &mockIncer{}
 			m.On("IncStart").Return(noop).Once()

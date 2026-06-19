@@ -70,23 +70,19 @@ func (c *Fleet) CopyNoLogging() *Fleet {
 }
 
 func strToLevel(s string) (zerolog.Level, error) {
-	l := zerolog.DebugLevel
-
-	s = strings.ToLower(s)
-	switch strings.TrimSpace(s) {
-	case "trace":
-		l = zerolog.TraceLevel
-	case "debug":
-		l = zerolog.DebugLevel
-	case "info":
-		l = zerolog.InfoLevel
-	case "warn", "warning":
-		l = zerolog.WarnLevel
-	case "error":
-		l = zerolog.ErrorLevel
+	s = strings.TrimSpace(s)
+	switch {
+	case strings.EqualFold(s, "trace"):
+		return zerolog.TraceLevel, nil
+	case strings.EqualFold(s, "debug"):
+		return zerolog.DebugLevel, nil
+	case strings.EqualFold(s, "info"):
+		return zerolog.InfoLevel, nil
+	case strings.EqualFold(s, "warn"), strings.EqualFold(s, "warning"):
+		return zerolog.WarnLevel, nil
+	case strings.EqualFold(s, "error"):
+		return zerolog.ErrorLevel, nil
 	default:
-		return l, fmt.Errorf("invalid log level; must be one of: trace, debug, info, warn, error")
+		return zerolog.DebugLevel, fmt.Errorf("invalid log level; must be one of: trace, debug, info, warn, error")
 	}
-
-	return l, nil
 }

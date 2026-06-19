@@ -58,7 +58,7 @@ func buildVersionConstraint(fleetVersion string) (version.Constraints, error) {
 	if err != nil {
 		return nil, err
 	}
-	return version.NewConstraint(fmt.Sprintf(">= %s", minimizePatch(ver)))
+	return version.NewConstraint(">= " + minimizePatch(ver))
 }
 
 func minimizePatch(ver *version.Version) string {
@@ -66,12 +66,16 @@ func minimizePatch(ver *version.Version) string {
 	if len(segments) > 2 {
 		segments = segments[:2]
 	}
-	segments = append(segments, 0)
-	segStrs := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		segStrs = append(segStrs, strconv.Itoa(segment))
+	var b strings.Builder
+	b.Grow(16)
+	for i, seg := range segments {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.Itoa(seg))
 	}
-	return strings.Join(segStrs, ".")
+	b.WriteString(".0")
+	return b.String()
 }
 
 func parseVersion(sver string) (*version.Version, error) {

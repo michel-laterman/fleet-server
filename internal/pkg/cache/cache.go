@@ -7,10 +7,12 @@
 package cache
 
 import (
-	"fmt"
+	"hash"
+	"hash/fnv"
 	"math/rand"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/rs/zerolog"
 
@@ -65,6 +67,36 @@ type actionCache struct {
 	actionType string
 }
 
+var keyHasherPool = sync.Pool{
+	New: func() any { return fnv.New64a() },
+}
+
+func unsafeBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+func scopedKeyHash(prefix, id string) uint64 {
+	h := keyHasherPool.Get().(hash.Hash64)
+	h.Reset()
+	h.Write(unsafeBytes(prefix))
+	h.Write(unsafeBytes(id))
+	sum := h.Sum64()
+	keyHasherPool.Put(h)
+	return sum
+}
+
+func artifactKeyHash(ident, sha2 string) uint64 {
+	h := keyHasherPool.Get().(hash.Hash64)
+	h.Reset()
+	h.Write(unsafeBytes("artifact:"))
+	h.Write(unsafeBytes(ident))
+	h.Write(unsafeBytes(":"))
+	h.Write(unsafeBytes(sha2))
+	sum := h.Sum64()
+	keyHasherPool.Put(h)
+	return sum
+}
+
 // New creates a new cache.
 func New(cfg config.Cache, opts ...Option) (*CacheT, error) {
 	cache, err := newCache(cfg)
@@ -113,14 +145,13 @@ func (c *CacheT) SetAction(action model.Action) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "action:" + action.ActionID
 	v := actionCache{
 		actionID:   action.ActionID,
 		actionType: action.Type,
 	}
-	cost := len(action.ActionID) + len(action.Type)
+	cost := len("action:") + len(action.ActionID) + len(action.Type)
 	ttl := c.cfg.ActionTTL
-	ok := c.cache.SetWithTTL(scopedKey, v, int64(cost), ttl)
+	ok := c.cache.SetWithTTL(scopedKeyHash("action:", action.ActionID), v, int64(cost), ttl)
 	c.log.Trace().
 		Bool("ok", ok).
 		Str("id", action.ActionID).
@@ -136,8 +167,7 @@ func (c *CacheT) GetAction(id string) (model.Action, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "action:" + id
-	if v, ok := c.cache.Get(scopedKey); ok {
+	if v, ok := c.cache.Get(scopedKeyHash("action:", id)); ok {
 		c.log.Trace().Str("id", id).Msg("Action cache HIT")
 		action, ok := v.(actionCache)
 		if !ok {
@@ -159,8 +189,6 @@ func (c *CacheT) SetAPIKey(key APIKey, enabled bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "api:" + key.ID
-
 	// Use the valid key as the payload of the record;
 	// If caller has marked key as not enabled, use empty string.
 	val := key.Key
@@ -180,8 +208,8 @@ func (c *CacheT) SetAPIKey(key APIKey, enabled bool) {
 		}
 	}
 
-	cost := len(scopedKey) + len(val)
-	ok := c.cache.SetWithTTL(scopedKey, val, int64(cost), ttl)
+	cost := len("api:") + len(key.ID) + len(val)
+	ok := c.cache.SetWithTTL(scopedKeyHash("api:", key.ID), val, int64(cost), ttl)
 	c.log.Trace().
 		Bool("ok", ok).
 		Bool("enabled", enabled).
@@ -196,8 +224,7 @@ func (c *CacheT) ValidAPIKey(key APIKey) bool {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "api:" + key.ID
-	v, ok := c.cache.Get(scopedKey)
+	v, ok := c.cache.Get(scopedKeyHash("api:", key.ID))
 	if ok {
 		switch v {
 		case "":
@@ -220,8 +247,7 @@ func (c *CacheT) GetEnrollmentAPIKey(id string) (model.EnrollmentAPIKey, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "record:" + id
-	if v, ok := c.cache.Get(scopedKey); ok {
+	if v, ok := c.cache.Get(scopedKeyHash("record:", id)); ok {
 		c.log.Trace().Str("id", id).Msg("Enrollment cache HIT")
 		key, ok := v.(model.EnrollmentAPIKey)
 
@@ -241,9 +267,8 @@ func (c *CacheT) SetEnrollmentAPIKey(id string, key model.EnrollmentAPIKey, cost
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "record:" + id
 	ttl := c.cfg.EnrollKeyTTL
-	ok := c.cache.SetWithTTL(scopedKey, key, cost, ttl)
+	ok := c.cache.SetWithTTL(scopedKeyHash("record:", id), key, cost, ttl)
 	c.log.Trace().
 		Bool("ok", ok).
 		Str("id", id).
@@ -252,17 +277,12 @@ func (c *CacheT) SetEnrollmentAPIKey(id string, key model.EnrollmentAPIKey, cost
 		Msg("EnrollmentApiKey cache SET")
 }
 
-func makeArtifactKey(ident, sha2 string) string {
-	return fmt.Sprintf("artifact:%s:%s", ident, sha2)
-}
-
 func (c *CacheT) GetArtifact(ident, sha2 string) (model.Artifact, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := makeArtifactKey(ident, sha2)
-	if v, ok := c.cache.Get(scopedKey); ok {
-		c.log.Trace().Str("key", scopedKey).Msg("Artifact cache HIT")
+	if v, ok := c.cache.Get(artifactKeyHash(ident, sha2)); ok {
+		c.log.Trace().Str("ident", ident).Str("sha2", sha2).Msg("Artifact cache HIT")
 		key, ok := v.(model.Artifact)
 
 		if !ok {
@@ -272,7 +292,7 @@ func (c *CacheT) GetArtifact(ident, sha2 string) (model.Artifact, bool) {
 		return key, ok
 	}
 
-	c.log.Trace().Str("key", scopedKey).Msg("Artifact cache MISS")
+	c.log.Trace().Str("ident", ident).Str("sha2", sha2).Msg("Artifact cache MISS")
 	return model.Artifact{}, false
 }
 
@@ -282,14 +302,14 @@ func (c *CacheT) SetArtifact(artifact model.Artifact) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := makeArtifactKey(artifact.Identifier, artifact.DecodedSha256)
 	cost := int64(len(artifact.Body))
 	ttl := c.cfg.ArtifactTTL
 
-	ok := c.cache.SetWithTTL(scopedKey, artifact, cost, ttl)
+	ok := c.cache.SetWithTTL(artifactKeyHash(artifact.Identifier, artifact.DecodedSha256), artifact, cost, ttl)
 	c.log.Trace().
 		Bool("ok", ok).
-		Str("key", scopedKey).
+		Str("ident", artifact.Identifier).
+		Str("sha2", artifact.DecodedSha256).
 		Int64("cost", cost).
 		Dur("ttl", ttl).
 		Msg("Artifact cache SET")
@@ -299,11 +319,10 @@ func (c *CacheT) SetUpload(id string, info file.Info) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "upload:" + id
 	ttl := 30 * time.Minute // @todo: add to configurable
 	// cache cost for other entries use bytes as the unit. Add up the string lengths and the size of the int64s in the upload.Info struct, as a manual 'sizeof'
 	cost := int64(len(info.ID) + len(info.DocID) + len(info.ActionID) + len(info.AgentID) + len(info.Source) + len(info.Status) + 8*4)
-	ok := c.cache.SetWithTTL(scopedKey, info, cost, ttl)
+	ok := c.cache.SetWithTTL(scopedKeyHash("upload:", id), info, cost, ttl)
 	c.log.Trace().
 		Bool("ok", ok).
 		Str("id", id).
@@ -315,8 +334,7 @@ func (c *CacheT) GetUpload(id string) (file.Info, bool) { //nolint:dupl // a lit
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "upload:" + id
-	if v, ok := c.cache.Get(scopedKey); ok {
+	if v, ok := c.cache.Get(scopedKeyHash("upload:", id)); ok {
 		c.log.Trace().Str("id", id).Msg("upload info cache HIT")
 		key, ok := v.(file.Info)
 		if !ok {
@@ -334,9 +352,8 @@ func (c *CacheT) SetPGPKey(id string, p []byte) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "pgp:" + id
 	ttl := 30 * time.Minute // @todo: add to configurable
-	ok := c.cache.SetWithTTL(scopedKey, p, int64(len(p)), ttl)
+	ok := c.cache.SetWithTTL(scopedKeyHash("pgp:", id), p, int64(len(p)), ttl)
 	c.log.Trace().
 		Bool("ok", ok).
 		Str("id", id).
@@ -349,8 +366,7 @@ func (c *CacheT) GetPGPKey(id string) ([]byte, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
-	scopedKey := "pgp:" + id
-	if v, ok := c.cache.Get(scopedKey); ok {
+	if v, ok := c.cache.Get(scopedKeyHash("pgp:", id)); ok {
 		c.log.Trace().Str("id", id).Msg("PGP key cache HIT")
 		key, ok := v.([]byte)
 		if !ok {

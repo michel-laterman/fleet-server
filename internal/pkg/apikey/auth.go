@@ -6,6 +6,7 @@ package apikey
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,10 +39,11 @@ type SecurityInfo struct {
 // Note: Prefer the bulk wrapper on this API
 func (k APIKey) Authenticate(ctx context.Context, client *elasticsearch.Client) (*SecurityInfo, error) {
 
-	token := fmt.Sprintf("%s%s", authPrefix, k.Token())
+	idKey := k.ID + ":" + k.Key
+	token := authPrefix + base64.StdEncoding.EncodeToString([]byte(idKey))
 
 	req := esapi.SecurityAuthenticateRequest{
-		Header: map[string][]string{AuthKey: []string{token}},
+		Header: map[string][]string{AuthKey: {token}},
 	}
 
 	res, err := req.Do(ctx, client)
